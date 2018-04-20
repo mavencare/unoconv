@@ -24,6 +24,8 @@ import signal
 import subprocess
 import sys
 import time
+import socket
+import errno
 
 __version__ = '0.8.2'
 
@@ -683,7 +685,7 @@ class Options:
         ### Set connection string
         if not self.connection:
             if not self.pipe:
-                self.connection = "socket,host=%s,port=%s,tcpNoDelay=1;urp;StarOffice.ComponentContext" % (self.server, self.port)
+                self.connection = "socket,host=%s,port=%s;urp;StarOffice.ComponentContext" % (self.server, self.port)
             else:
                 self.connection = "pipe,name=%s;urp;StarOffice.ComponentContext" % (self.pipe)
 
@@ -807,6 +809,15 @@ class Convertor:
         unocontext = None
 
         try:
+            ### We need to check if the socket is already open in python due to a bug in LibreOffice
+            try:
+                sock = socket.socket()
+                sock.connect((op.server, int(op.port)))
+            except socket.error as e:
+                if e.errno == errno.ECONNREFUSED:
+                    raise NoConnectException
+            else:
+                sock.close()
             unocontext = resolver.resolve("uno:%s" % op.connection)
         except NoConnectException as e:
 #            info(3, "Existing listener not found.\n%s" % e)
@@ -840,6 +851,17 @@ class Convertor:
                         break
 
                     try:
+                        ### Wait for LibreOffice to open by polling socket before calling resolver
+                        while True:
+                            try:
+                                sock = socket.socket()
+                                sock.connect((op.server, int(op.port)))
+                            except:
+                                time.sleep(0.5)
+                                pass
+                            else:
+                                sock.close()
+                                break
                         unocontext = resolver.resolve("uno:%s" % op.connection)
                         break
                     except NoConnectException:
